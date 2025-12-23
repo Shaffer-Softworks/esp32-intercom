@@ -1,0 +1,24 @@
+# Arduino
+*.hex
+*.elf
+*.bin
+build/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# User-specific configuration
+secrets.h
+config.h
+

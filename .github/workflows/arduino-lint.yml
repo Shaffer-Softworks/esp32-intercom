@@ -1,0 +1,33 @@
+name: Arduino Lint
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+        with:
+          version: latest
+      
+      - name: Install ESP32 Board Support
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+      
+      - name: Install Dependencies
+        run: |
+          arduino-cli lib install "WebSockets"
+          arduino-cli lib install "ArduinoJson"
+      
+      - name: Compile Sketch
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32 esp32_intercom.ino
+
