@@ -1,172 +1,119 @@
-# ESP32 Intercom Client
+# ESPHome Intercom Integration
 
-ESP32 implementation of the intercom system, compatible with the Android WebRTC Intercom.
+This directory contains ESPHome configuration and components for integrating ESP32 devices with the Android WebRTC Intercom system.
 
 ## Overview
 
-This ESP32 intercom client connects to the same signaling server as Android devices and enables voice communication between ESP32 devices and Android tablets/phones.
+ESPHome is a system for controlling ESP8266/ESP32 devices using YAML configuration files. This integration allows ESP32 devices running ESPHome to participate in the intercom system.
 
 ## Features
 
-- ✅ **WebSocket Signaling** - Same protocol as Android, connects to Node-RED signaling server
-- ✅ **I2S Audio I/O** - Microphone input and speaker output
-- ✅ **RTP/UDP Audio Streaming** - Simplified audio protocol (full WebRTC is too resource-intensive)
-- ✅ **Auto-Reconnect** - Automatically reconnects to signaling server
-- ✅ **Always-On Mode** - Stays connected to receive incoming calls
-- ✅ **Call Management** - Start, accept, and end calls
+- **WebSocket Signaling**: Connects to the same Node-RED signaling server as Android devices
+- **Audio I/O**: Uses I2S for microphone input and speaker output
+- **RTP Audio Streaming**: Uses UDP/RTP for audio transmission (simpler than full WebRTC)
+- **Home Assistant Integration**: Can be controlled via Home Assistant automations
 
 ## Hardware Requirements
 
-- ESP32 development board (ESP32, ESP32-S3, etc.)
+- ESP32 development board
 - I2S microphone (e.g., INMP441)
 - I2S amplifier/speaker (e.g., MAX98357A)
 
 ### Pin Configuration
 
-Default pin configuration (modify in code if needed):
+Default pin configuration (modify in `intercom_component.cpp` if needed):
 
 **Microphone (INMP441):**
-- SCK (Serial Clock): GPIO 32
-- WS (Word Select): GPIO 25
-- SD (Serial Data): GPIO 33
+- BCLK: GPIO 32
+- WS: GPIO 25
+- DATA: GPIO 33
 
 **Speaker (MAX98357A):**
-- BCLK (Bit Clock): GPIO 26
-- LRCLK (Left/Right Clock): GPIO 25
-- DIN (Data Input): GPIO 22
-
-## Software Requirements
-
-### Arduino IDE
-
-1. Install [Arduino IDE](https://www.arduino.cc/en/software)
-2. Add ESP32 board support:
-   - File → Preferences → Additional Board Manager URLs
-   - Add: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-   - Tools → Board → Boards Manager → Search "ESP32" → Install
-
-### Required Libraries
-
-Install via Arduino Library Manager (Sketch → Include Library → Manage Libraries):
-
-1. **WebSockets** by Markus Sattler
-   - Search: "WebSockets"
-   - Install: "WebSockets" by Markus Sattler
-
-2. **ArduinoJson** by Benoit Blanchon
-   - Search: "ArduinoJson"
-   - Install: "ArduinoJson" by Benoit Blanchon
+- BCLK: GPIO 26
+- LRCLK: GPIO 25
+- DIN: GPIO 22
 
 ## Installation
 
-1. **Clone this repository:**
+### Option 1: ESPHome Add-on (Home Assistant)
+
+1. Install ESPHome add-on in Home Assistant
+2. Copy `intercom.yaml` to your ESPHome configuration directory
+3. Copy `intercom_component.h` and `intercom_component.cpp` to a custom components directory
+4. Create `secrets.yaml` with your WiFi credentials:
+
+```yaml
+wifi_ssid: "YOUR_WIFI_SSID"
+wifi_password: "YOUR_WIFI_PASSWORD"
+api_encryption_key: "YOUR_API_KEY"
+ota_password: "YOUR_OTA_PASSWORD"
+```
+
+5. Compile and upload to your ESP32 device
+
+### Option 2: Standalone ESPHome
+
+1. Install ESPHome:
    ```bash
-   git clone <repository-url>
-   cd esp32-intercom-repo
+   pip install esphome
    ```
 
-2. **Open `esp32_intercom.ino` in Arduino IDE**
+2. Create `secrets.yaml` with your credentials
 
-3. **Configure settings:**
-   - Edit WiFi credentials:
-     ```cpp
-     const char* ssid = "YOUR_WIFI_SSID";
-     const char* password = "YOUR_WIFI_PASSWORD";
-     ```
-   - Edit signaling server (if different):
-     ```cpp
-     const char* signalingServer = "ha.shafferco.com";
-     const int signalingPort = 1880;
-     const char* signalingPath = "/endpoint/webrtc";
-     ```
+3. Compile and upload:
+   ```bash
+   esphome compile intercom.yaml
+   esphome upload intercom.yaml
+   ```
 
-4. **Select board:**
-   - Tools → Board → ESP32 Arduino → Your ESP32 board
+## Configuration
 
-5. **Upload:**
-   - Connect ESP32 via USB
-   - Tools → Port → Select your COM port
-   - Click Upload
+### Basic Configuration
+
+Edit `intercom.yaml` to configure:
+
+- **WiFi**: Set SSID and password in `secrets.yaml`
+- **Signaling Server**: Default is `ha.shafferco.com:1880/endpoint/webrtc`
+- **Audio Port**: Default UDP port is 5004
+
+### Custom Component
+
+The custom component (`intercom_component.h`/`intercom_component.cpp`) provides:
+
+- WebSocket signaling client
+- I2S audio handling
+- RTP/UDP audio streaming
+- Call state management
 
 ## Usage
 
-### Automatic Operation
+### Home Assistant Integration
 
-Once uploaded, the ESP32 will:
-1. Connect to WiFi
-2. Connect to signaling server
-3. Join room with its client ID (format: `esp32-XXXXXXXX`)
-4. Wait for incoming calls or can initiate calls
+Once installed, the intercom device will appear in Home Assistant with:
+
+- **Switches**: Start Call, End Call, Accept Call
+- **Sensors**: WiFi Signal, Uptime
+- **Text Sensors**: IP Address, SSID, MAC Address
 
 ### Making Calls
 
-Currently, calls are initiated programmatically. To add call initiation:
+1. **Via Home Assistant**:
+   - Use the "Start Call" switch
+   - Specify target device ID in automation
 
-1. Modify the code to call `startCall(targetDeviceId)` when needed
-2. Or use serial commands (see Serial Commands section)
+2. **Via API**:
+   ```yaml
+   service: esphome.intercom_start_call
+   data:
+     target_device_id: "station-12345678"
+   ```
 
 ### Receiving Calls
 
 The device automatically:
-- Accepts incoming calls
-- Routes audio through I2S
-- Handles call termination
-
-## Serial Commands
-
-Connect via Serial Monitor (115200 baud) for debugging:
-
-- Monitor connection status
-- View signaling messages
-- Debug audio issues
-
-## Configuration
-
-### Audio Settings
-
-```cpp
-#define SAMPLE_RATE 16000        // Audio sample rate (Hz)
-#define BITS_PER_SAMPLE I2S_BITS_PER_SAMPLE_16BIT
-#define I2S_CHANNELS I2S_CHANNEL_MONO
-#define BUFFER_SIZE 1024         // Audio buffer size
-```
-
-### Network Settings
-
-```cpp
-const char* signalingServer = "ha.shafferco.com";
-const int signalingPort = 1880;
-const char* signalingPath = "/endpoint/webrtc";
-int localAudioPort = 5004;      // UDP port for audio
-```
-
-## Signaling Protocol
-
-The ESP32 uses the same signaling message format as Android:
-
-### Message Types
-
-- `join` - Join a room
-- `joined` - Confirmation of joining
-- `ready` - Room is ready (2 peers)
-- `offer` - Call offer (SDP)
-- `answer` - Call answer (SDP)
-- `candidate` - ICE candidate
-- `leave` - Leave call
-- `error` - Error message
-
-### Client ID Format
-
-ESP32 devices use: `esp32-XXXXXXXX`
-- Where `XXXXXXXX` is derived from MAC address
-- Example: `esp32-12345678`
-
-## Audio Format
-
-- **Sample Rate**: 16 kHz
-- **Bit Depth**: 16-bit
-- **Channels**: Mono
-- **Protocol**: RTP/UDP (simplified, not full WebRTC)
+- Connects to signaling server on startup
+- Joins room with its client ID (format: `esphome-XXXXXXXX`)
+- Accepts incoming calls automatically
 
 ## Integration with Android
 
@@ -178,63 +125,47 @@ ESP32 devices use: `esp32-XXXXXXXX`
 
 ### For Full Interoperability
 
-The Android app currently only supports WebRTC. To enable Android ↔ ESP32 calls:
-
-1. **Option 1**: Modify Android app to support RTP for ESP32 devices
-   - Detect ESP32 devices (clientId starts with "esp32-")
-   - Use RTP/UDP for ESP32 calls
-   - Keep WebRTC for Android-to-Android calls
-
-2. **Option 2**: WebRTC Bridge Server
-   - Server converts WebRTC ↔ RTP
-   - No Android changes needed
-
-3. **Option 3**: Lightweight WebRTC on ESP32
-   - Implement minimal WebRTC subset
-   - Most complex option
+See `INTEGRATION.md` in the parent directory for options to enable Android ↔ ESPHome calls.
 
 ## Troubleshooting
 
 ### Device Not Connecting
 
-1. **Check WiFi**: Verify credentials are correct
+1. **Check WiFi**: Verify credentials in `secrets.yaml`
 2. **Check Signaling Server**: Verify server is accessible
-3. **Check Serial Monitor**: Look for error messages
+3. **Check Logs**: Enable debug logging in ESPHome
 
-### No Audio Output
+### No Audio
 
-1. **Check I2S Connections**: Verify pin connections match code
+1. **Check I2S Connections**: Verify pin connections
 2. **Check Audio Port**: Verify UDP port 5004 is open
-3. **Check Buffer Sizes**: May need adjustment for your hardware
+3. **Check Buffer Sizes**: May need to adjust for your hardware
 
 ### WebSocket Disconnects
 
 1. **Network Stability**: Check WiFi signal strength
 2. **Server Availability**: Verify signaling server is running
-3. **Reconnect**: Device auto-reconnects every 5 seconds
+3. **Reconnect Settings**: Adjust reconnect timeout if needed
 
 ## Development
 
-### Project Structure
+### Custom Component Structure
 
 ```
-esp32-intercom-repo/
-├── esp32_intercom.ino    # Main Arduino sketch
-├── README.md              # This file
-├── LICENSE                # License file
-├── .gitignore            # Git ignore file
-└── docs/                  # Additional documentation
-    ├── HARDWARE.md       # Hardware setup guide
-    └── INTEGRATION.md    # Integration guide
+esphome-intercom/
+├── intercom.yaml              # Main ESPHome configuration
+├── intercom_component.h       # Component header
+├── intercom_component.cpp     # Component implementation
+└── README.md                  # This file
 ```
 
 ### Adding Features
 
 To extend functionality:
 
-1. **Add Methods**: Add to the main sketch
-2. **Modify Signaling**: Update `handleSignalingMessage()`
-3. **Audio Processing**: Modify `sendAudioPacket()` / `receiveAudioPacket()`
+1. **Add Methods**: Add to `intercom_component.h` and implement in `.cpp`
+2. **Expose to ESPHome**: Add sensors/switches in `intercom.yaml`
+3. **Home Assistant**: Use ESPHome API to control from HA
 
 ## Limitations
 
@@ -251,32 +182,15 @@ To extend functionality:
 - [ ] DTLS-SRTP encryption
 - [ ] Call quality metrics
 - [ ] Multi-room support
-- [ ] Serial command interface for call control
-
-## License
-
-[Specify your license here]
-
-## Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
 
 ## References
 
-- [WebRTC Specification](https://www.w3.org/TR/webrtc/)
-- [RTP Specification](https://tools.ietf.org/html/rfc3550)
+- [ESPHome Documentation](https://esphome.io/)
+- [ESPHome Custom Components](https://esphome.io/components/custom.html)
 - [ESP32 I2S Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/i2s.html)
-- [Arduino WebSockets Library](https://github.com/Links2004/arduinoWebSockets)
+- [WebRTC Signaling Protocol](../README.md)
 
-## Support
+## License
 
-For issues and questions:
-- Open an issue on GitHub
-- Check the documentation in `docs/`
-- Review the troubleshooting section
+Same as main project.
 
