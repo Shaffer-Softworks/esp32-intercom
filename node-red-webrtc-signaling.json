@@ -1,0 +1,117 @@
+[
+  {
+    "id": "c4b2a1b5b0a1a111",
+    "type": "tab",
+    "label": "WebRTC Signaling (LAN Intercom)",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "a7e0d85a3c9b2222",
+    "type": "websocket-listener",
+    "path": "/webrtc",
+    "wholemsg": "false"
+  },
+  {
+    "id": "7c6f9b3e4d5c3333",
+    "type": "websocket in",
+    "z": "c4b2a1b5b0a1a111",
+    "name": "WS In /webrtc",
+    "server": "a7e0d85a3c9b2222",
+    "client": "",
+    "x": 160,
+    "y": 140,
+    "wires": [
+      [
+        "debug-incoming",
+        "6d8d9f9f1a0c4444"
+      ]
+    ]
+  },
+  {
+    "id": "9a1f2b3c4d5e5555",
+    "type": "websocket out",
+    "z": "c4b2a1b5b0a1a111",
+    "name": "WS Out /webrtc",
+    "server": "a7e0d85a3c9b2222",
+    "client": "",
+    "x": 760,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "debug-incoming",
+    "type": "debug",
+    "z": "c4b2a1b5b0a1a111",
+    "name": "Debug: Incoming WS",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 360,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "debug-outgoing",
+    "type": "debug",
+    "z": "c4b2a1b5b0a1a111",
+    "name": "Debug: Outgoing WS",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 560,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "debug-rooms",
+    "type": "debug",
+    "z": "c4b2a1b5b0a1a111",
+    "name": "Debug: Room State",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 560,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "6d8d9f9f1a0c4444",
+    "type": "function",
+    "z": "c4b2a1b5b0a1a111",
+    "name": "Signaling Router (rooms + evict + fixed roles)",
+    "func": "// WebRTC signaling router w/ 2 peers per room + clientId/sessionId eviction\n// - clientId: stable per device (e.g., \"station-frontdoor\" / \"handset-mike\")\n// - sessionId: random per app run / reconnect attempt\n// Behavior:\n// - If the same clientId joins again, evict its previous socket in that room.\n// - Keep max 2 peers in room (intercom style).\n// - Relay offer/answer/candidate between the two peers.\n// - Fixed roles:\n//    handset-* => caller\n//    station-* => callee\n\nconst sessId = msg?._session?.id;\nif (!sessId) {\n    node.warn(\"No session ID found in message\");\n    return null;\n}\n\nlet data = msg.payload;\nif (typeof data === \"string\") {\n  try { data = JSON.parse(data); } catch (e) { \n    node.warn(\"Failed to parse JSON: \" + e.message);\n    return null; \n  }\n}\nif (!data || !data.type) {\n    node.warn(\"No type in message data\");\n    return null;\n}\n\nlet rooms = flow.get(\"rooms\") || {};       // { roomId: { peers: [ {sessId, clientId, sessionId}, ... ] } }\nlet sessInfo = flow.get(\"sessInfo\") || {}; // { sessId: { roomId, clientId, sessionId } }\n\nnode.log(\"Processing message type: \" + data.type + \" from session: \" + sessId);\n\nfunction sendTo(targetSessId, obj) {\n  node.log(\"Sending to session \" + targetSessId + \": \" + JSON.stringify(obj));\n  node.send({ _session: { id: targetSessId }, payload: JSON.stringify(obj) });\n}\n\nfunction broadcast(roomId, fromSessId, obj) {\n  const room = rooms[roomId];\n  if (!room) {\n    node.warn(\"Broadcast: Room \" + roomId + \" not found\");\n    return;\n  }\n  node.log(\"Broadcasting in room \" + roomId + \" from \" + fromSessId + \": \" + JSON.stringify(obj));\n  for (const p of room.peers) {\n    if (p.sessId !== fromSessId) sendTo(p.sessId, obj);\n  }\n}\n\nfunction removePeer(roomId, targetSessId, notifyOthers) {\n  const room = rooms[roomId];\n  if (!room) return;\n\n  if (notifyOthers) {\n    broadcast(roomId, targetSessId, { type: \"leave\" });\n  }\n\n  room.peers = room.peers.filter(p => p.sessId !== targetSessId);\n  if (room.peers.length === 0) delete rooms[roomId];\n  \n  node.log(\"Removed peer \" + targetSessId + \" from room \" + roomId + \". Remaining peers: \" + room.peers.length);\n}\n\nfunction findPeerByClientId(roomId, clientId) {\n  const room = rooms[roomId];\n  if (!room) return null;\n  return room.peers.find(p => p.clientId === clientId) || null;\n}\n\nif (data.type === \"join\") {\n  const roomId = String(data.roomId || \"\");\n  const clientId = String(data.clientId || \"\");\n  const sessionId = String(data.sessionId || \"\");\n\n  node.log(\"Join request - roomId: \" + roomId + \", clientId: \" + clientId + \", sessionId: \" + sessionId);\n\n  if (!roomId || !clientId || !sessionId) {\n    node.warn(\"Join: Missing required fields - roomId: \" + roomId + \", clientId: \" + clientId + \", sessionId: \" + sessionId);\n    sendTo(sessId, { type: \"error\", message: \"missing_room_or_ids\" });\n    return null;\n  }\n\n  rooms[roomId] = rooms[roomId] || { peers: [] };\n\n  // Check if this session is already in the room (reconnection/update)\n  const alreadyInRoom = rooms[roomId].peers.some(p => p.sessId === sessId);\n\n  // Evict stale socket for same clientId\n  const existing = findPeerByClientId(roomId, clientId);\n  if (existing && existing.sessId !== sessId) {\n    node.log(\"Evicting existing session \" + existing.sessId + \" for clientId \" + clientId);\n    sendTo(existing.sessId, { type: \"replaced\", bySessionId: sessionId });\n    removePeer(roomId, existing.sessId, true);\n    delete sessInfo[existing.sessId];\n  }\n\n  // Count unique clientIds in the room\n  const uniqueClientIds = new Set(rooms[roomId].peers.map(p => p.clientId));\n  \n  // If room is full (2 unique clientIds) and this is a new session with a new clientId, reject\n  if (!alreadyInRoom && uniqueClientIds.size >= 2 && !uniqueClientIds.has(clientId)) {\n    node.warn(\"Room \" + roomId + \" is full (\" + uniqueClientIds.size + \" unique clientIds). Cannot add new clientId \" + clientId);\n    sendTo(sessId, { type: \"error\", message: \"room_full\" });\n    flow.set(\"rooms\", rooms);\n    flow.set(\"sessInfo\", sessInfo);\n    return null;\n  }\n\n  // Add/update this peer\n  if (!alreadyInRoom) {\n    rooms[roomId].peers.push({ sessId, clientId, sessionId });\n    node.log(\"Added new peer to room \" + roomId + \". Total peers: \" + rooms[roomId].peers.length);\n  } else {\n    const peer = rooms[roomId].peers.find(p => p.sessId === sessId);\n    if (peer) {\n      peer.clientId = clientId;\n      peer.sessionId = sessionId;\n      node.log(\"Updated existing peer in room \" + roomId);\n    }\n  }\n\n  // Reverse lookup\n  sessInfo[sessId] = { roomId, clientId, sessionId };\n\n  // Fixed roles by prefix\n  let role = \"callee\";\n  if (clientId.startsWith(\"handset-\")) role = \"caller\";\n  if (clientId.startsWith(\"station-\")) role = \"callee\";\n\n  node.log(\"Sending joined message to \" + sessId + \" with role: \" + role);\n  sendTo(sessId, { type: \"joined\", roomId, role, clientId, sessionId });\n\n  // ready when 2 peers\n  if (rooms[roomId].peers.length === 2) {\n    node.log(\"Room \" + roomId + \" is ready with 2 peers. Sending ready to both.\");\n    for (const p of rooms[roomId].peers) {\n      sendTo(p.sessId, { type: \"ready\", roomId });\n    }\n  }\n\n  // Debug: Log current room state\n  node.send([null, { payload: { rooms: rooms, sessInfo: sessInfo } }]);\n\n  flow.set(\"rooms\", rooms);\n  flow.set(\"sessInfo\", sessInfo);\n  return null;\n}\n\n// Non-join: must be known session\nconst info = sessInfo[sessId];\nif (!info) {\n    node.warn(\"Message from unknown session: \" + sessId);\n    return null;\n}\nconst roomId = info.roomId;\nif (!rooms[roomId]) {\n    node.warn(\"Room \" + roomId + \" not found for session \" + sessId);\n    return null;\n}\n\nif (data.type === \"leave\") {\n  node.log(\"Leave request from \" + sessId + \" in room \" + roomId);\n  broadcast(roomId, sessId, { type: \"leave\" });\n  removePeer(roomId, sessId, false);\n  delete sessInfo[sessId];\n  node.send([null, { payload: { rooms: rooms, sessInfo: sessInfo } }]);\n  flow.set(\"rooms\", rooms);\n  flow.set(\"sessInfo\", sessInfo);\n  return null;\n}\n\nif (data.type === \"offer\" || data.type === \"answer\" || data.type === \"candidate\") {\n  node.log(\"Relaying \" + data.type + \" in room \" + roomId + \" from \" + sessId);\n  broadcast(roomId, sessId, data);\n  return null;\n}\n\nnode.warn(\"Unknown message type: \" + data.type);\nreturn null;\n",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 460,
+    "y": 140,
+    "wires": [
+      [
+        "debug-outgoing",
+        "9a1f2b3c4d5e5555"
+      ],
+      [
+        "debug-rooms"
+      ]
+    ]
+  }
+]
+
