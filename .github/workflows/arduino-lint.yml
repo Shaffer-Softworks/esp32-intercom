@@ -14,8 +14,6 @@ jobs:
       
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v1
-        with:
-          version: 0.35.3
       
       - name: Install ESP32 Board Support
         run: |
