@@ -174,8 +174,15 @@ void loop() {
 
 void generateClientId() {
   // Use MAC address to generate unique client ID
+  uint64_t chipid = ESP.getEfuseMac();
+  // Extract MAC address bytes (6 bytes total)
   uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  mac[0] = (chipid >> 40) & 0xFF;
+  mac[1] = (chipid >> 32) & 0xFF;
+  mac[2] = (chipid >> 24) & 0xFF;
+  mac[3] = (chipid >> 16) & 0xFF;
+  mac[4] = (chipid >> 8) & 0xFF;
+  mac[5] = chipid & 0xFF;
   char macStr[18];
   sprintf(macStr, "%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
   clientId = "esp32-" + String(macStr).substring(0, 8);

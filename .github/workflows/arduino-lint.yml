@@ -27,5 +27,7 @@ jobs:
       
       - name: Compile Sketch
         run: |
-          arduino-cli compile --fqbn esp32:esp32:esp32 esp32_intercom.ino
+          mkdir -p esp32_intercom
+          cp esp32_intercom.ino esp32_intercom/
+          arduino-cli compile --fqbn esp32:esp32:esp32 esp32_intercom
 
