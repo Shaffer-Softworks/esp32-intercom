@@ -29,6 +29,5 @@ jobs:
         run: |
           mkdir -p esp32_intercom
           cp esp32_intercom.ino esp32_intercom/
-          cp intercom_component.* esp32_intercom/ 2>/dev/null || true
           arduino-cli compile --fqbn esp32:esp32:esp32 esp32_intercom
 
