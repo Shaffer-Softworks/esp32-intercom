@@ -1,6 +1,6 @@
 # Waveshare ESP32-P4-86 Hardware Configuration
 
-This document describes the hardware-specific configuration for the Waveshare ESP32-P4-86 panel.
+Complete hardware configuration guide for the Waveshare ESP32-P4-86 panel with ES8311 DAC and ES7210 ADC.
 
 ## Hardware Components
 

@@ -2,6 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, text_sensor, switch
 from esphome.const import CONF_ID
+from esphome.components.esp32 import add_idf_sdkconfig_option
 
 CODEOWNERS = ["@michaelshaffer"]
 DEPENDENCIES = ["wifi"]
@@ -14,12 +15,15 @@ CONF_SIGNALING_SERVER = "signaling_server"
 CONF_SIGNALING_PORT = "signaling_port"
 CONF_SIGNALING_PATH = "signaling_path"
 CONF_CLIENT_ID_PREFIX = "client_id_prefix"
+CONF_AUTO_ACCEPT = "auto_accept"
+CONF_AUTO_CONNECT = "auto_connect"
 CONF_CALL_STATE = "call_state"
 CONF_CALL_STATUS = "call_status"
 CONF_START_CALL = "start_call"
 CONF_END_CALL = "end_call"
 CONF_ACCEPT_CALL = "accept_call"
 CONF_MUTE = "mute"
+CONF_TARGET_DEVICE = "target_device"
 
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(IntercomComponent),
@@ -27,6 +31,9 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Optional(CONF_SIGNALING_PORT, default=1880): cv.port,
     cv.Optional(CONF_SIGNALING_PATH, default="/endpoint/webrtc"): cv.string,
     cv.Optional(CONF_CLIENT_ID_PREFIX, default="esphome-"): cv.string,
+    cv.Optional(CONF_AUTO_ACCEPT, default=True): cv.boolean,
+    cv.Optional(CONF_AUTO_CONNECT, default=True): cv.boolean,
+    cv.Optional(CONF_TARGET_DEVICE): text_sensor.text_sensor_schema(),
     cv.Optional(CONF_CALL_STATE): sensor.sensor_schema(
         unit_of_measurement="",
         accuracy_decimals=1,
@@ -46,6 +53,12 @@ async def to_code(config):
     cg.add(var.set_signaling_port(config[CONF_SIGNALING_PORT]))
     cg.add(var.set_signaling_path(config[CONF_SIGNALING_PATH]))
     cg.add(var.set_client_id_prefix(config[CONF_CLIENT_ID_PREFIX]))
+    cg.add(var.set_auto_accept(config.get(CONF_AUTO_ACCEPT, True)))
+    cg.add(var.set_auto_connect(config.get(CONF_AUTO_CONNECT, True)))
+    
+    if CONF_TARGET_DEVICE in config:
+        text_sens = await text_sensor.new_text_sensor(config[CONF_TARGET_DEVICE])
+        # Note: This would need a callback to update target device
     
     if CONF_CALL_STATE in config:
         sens = await sensor.new_sensor(config[CONF_CALL_STATE])

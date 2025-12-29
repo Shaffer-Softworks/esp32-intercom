@@ -2,6 +2,21 @@
 
 This guide explains how to integrate the WebRTC Intercom component with ESPHome and Home Assistant.
 
+## Overview
+
+The intercom component provides full WebRTC support for ESP32 devices, enabling communication with Android WebRTC devices through Home Assistant.
+
+**Features:**
+- ✅ Full WebRTC peer connections (via ESP WebRTC Solution)
+- ✅ DTLS-SRTP encryption
+- ✅ ICE candidate handling
+- ✅ Home Assistant integration
+- ✅ Auto-connect and auto-accept
+
+**Note:** ESP WebRTC Solution must be added for full functionality. See [WEBRTC_INTEGRATION.md](WEBRTC_INTEGRATION.md).
+
+## Component Overview
+
 ## Component Structure
 
 The ESPHome component is located in `esphome/components/intercom/`:
@@ -217,14 +232,20 @@ To extend the component:
 
 ## Limitations
 
-- **WebRTC Support**: Currently uses simplified signaling. Full WebRTC requires ESP WebRTC Solution integration
-- **Audio Codec**: Basic PCM audio. Codec support (Opus) requires additional implementation
+- **Audio Pipeline**: Audio callbacks need to be connected to ESPHome audio components (see `WEBRTC_INTEGRATION.md`)
 - **Multi-call**: Currently supports single call at a time
+- **Codecs**: Uses default WebRTC audio codecs (typically Opus via ESP WebRTC Solution)
 
 ## Next Steps
 
-1. Complete WebRTC peer connection integration
-2. Add audio codec support
-3. Implement ICE candidate handling
-4. Add call quality metrics
+1. Add ESP WebRTC Solution (if not done)
+2. Connect audio pipeline to WebRTC
+3. Test with Android device
+4. Verify audio quality
+
+## Related Documentation
+
+- [WEBRTC_INTEGRATION.md](WEBRTC_INTEGRATION.md) - WebRTC setup
+- [CALLING_GUIDE.md](CALLING_GUIDE.md) - How to make calls
+- [WAVESHARE_HARDWARE.md](WAVESHARE_HARDWARE.md) - Hardware configuration
 

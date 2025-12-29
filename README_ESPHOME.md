@@ -1,6 +1,20 @@
 # ESPHome Integration - Quick Start
 
-This ESPHome component integrates WebRTC intercom functionality with Home Assistant for the Waveshare ESP32-P4-86 panel.
+This ESPHome component integrates WebRTC **signaling** with Home Assistant for the Waveshare ESP32-P4-86 panel.
+
+## ⚠️ Important: ESP WebRTC Solution Required
+
+**To work with Android devices**, you must add the ESP WebRTC Solution:
+
+```bash
+cd ~/.esphome/components/intercom
+git submodule add https://github.com/espressif/esp-webrtc-solution.git esp-webrtc-solution
+cd esp-webrtc-solution && git submodule update --init --recursive
+```
+
+The component integrates ESP WebRTC Solution for full Android WebRTC compatibility. See [WEBRTC_INTEGRATION.md](WEBRTC_INTEGRATION.md) for complete setup.
+
+## Quick Start
 
 ## Quick Setup
 

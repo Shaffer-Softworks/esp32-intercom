@@ -11,6 +11,8 @@
 #ifdef USE_ESP_IDF
 #include "esp_websocket_client.h"
 #include "cJSON.h"
+#include "esp_peer.h"
+#include "esp_webrtc.h"
 #else
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
@@ -37,6 +39,7 @@ class IntercomComponent : public Component {
   // Home Assistant entities
   void set_call_state_sensor(sensor::Sensor *sensor) { call_state_sensor_ = sensor; }
   void set_call_status_text_sensor(text_sensor::TextSensor *sensor) { call_status_text_sensor_ = sensor; }
+  void set_target_device_text_sensor(text_sensor::TextSensor *sensor) { target_device_text_sensor_ = sensor; }
   void set_start_call_switch(switch_::Switch *sw) { start_call_switch_ = sw; }
   void set_end_call_switch(switch_::Switch *sw) { end_call_switch_ = sw; }
   void set_accept_call_switch(switch_::Switch *sw) { accept_call_switch_ = sw; }
@@ -47,6 +50,10 @@ class IntercomComponent : public Component {
   void end_call();
   void accept_call();
   void toggle_mute();
+  
+  // Configuration
+  void set_auto_accept(bool auto_accept) { auto_accept_ = auto_accept; }
+  void set_auto_connect(bool auto_connect) { auto_connect_ = auto_connect; }
   
   // State
   bool is_in_call() const { return in_call_; }
@@ -66,6 +73,9 @@ class IntercomComponent : public Component {
   bool in_call_ = false;
   bool muted_ = false;
   bool ready_ = false;
+  bool auto_accept_ = true;      // Automatically accept incoming calls
+  bool auto_connect_ = true;     // Automatically send offer when ready
+  bool waiting_for_ready_ = false; // Waiting for ready to send offer
   
   // Device identification
   std::string client_id_;
@@ -75,10 +85,29 @@ class IntercomComponent : public Component {
   
 #ifdef USE_ESP_IDF
   esp_websocket_client_handle_t websocket_client_ = nullptr;
+  esp_peer_handle_t webrtc_peer_ = nullptr;  // WebRTC peer connection
+  bool is_offerer_ = false;  // true when initiating call, false when receiving
+  
   void websocket_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
   void connect_websocket();
   void disconnect_websocket();
   esp_err_t send_websocket_message(const std::string &message);
+  
+  // WebRTC methods
+  esp_err_t init_webrtc_peer(bool is_offerer);
+  void deinit_webrtc_peer();
+  esp_err_t create_offer();
+  esp_err_t create_answer();
+  esp_err_t set_remote_description(const std::string &sdp, bool is_offer);
+  esp_err_t add_ice_candidate(const std::string &candidate);
+  void on_ice_candidate(const char *candidate);
+  void on_peer_connection_state(esp_peer_connection_state_t state);
+  
+  // Audio callbacks for WebRTC
+  static int audio_capture_cb(void *ctx, void *buffer, int len);
+  static int audio_render_cb(void *ctx, void *buffer, int len);
+  static void ice_candidate_cb(void *ctx, const char *candidate);
+  static void peer_connection_state_cb(void *ctx, esp_peer_connection_state_t state);
 #else
   WebSocketsClient web_socket_;
   static void websocket_event_(WStype_t type, uint8_t *payload, size_t length);
@@ -100,9 +129,13 @@ class IntercomComponent : public Component {
   void update_call_state_();
   void update_status_text_();
   
+  // Methods
+  void send_offer_for_call_();
+  
   // Home Assistant entities
   sensor::Sensor *call_state_sensor_{nullptr};
   text_sensor::TextSensor *call_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *target_device_text_sensor_{nullptr};
   switch_::Switch *start_call_switch_{nullptr};
   switch_::Switch *end_call_switch_{nullptr};
   switch_::Switch *accept_call_switch_{nullptr};

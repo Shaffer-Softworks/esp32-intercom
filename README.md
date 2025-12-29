@@ -1,196 +1,100 @@
-# ESPHome Intercom Integration
+# ESP32 Intercom - ESPHome & Home Assistant Integration
 
-This directory contains ESPHome configuration and components for integrating ESP32 devices with the Android WebRTC Intercom system.
+WebRTC intercom system for ESP32 devices with full Android WebRTC compatibility via ESPHome and Home Assistant integration.
 
 ## Overview
 
-ESPHome is a system for controlling ESP8266/ESP32 devices using YAML configuration files. This integration allows ESP32 devices running ESPHome to participate in the intercom system.
+This project provides:
+- **ESPHome Custom Component** for WebRTC intercom functionality
+- **Full WebRTC Support** using Espressif ESP WebRTC Solution
+- **Home Assistant Integration** with sensors, switches, and automations
+- **Android Compatibility** - Works with standard Android WebRTC devices
+- **Waveshare ESP32-P4-86 Support** - Optimized for ESP32-P4 panel hardware
 
 ## Features
 
-- **WebSocket Signaling**: Connects to the same Node-RED signaling server as Android devices
-- **Audio I/O**: Uses I2S for microphone input and speaker output
-- **RTP Audio Streaming**: Uses UDP/RTP for audio transmission (simpler than full WebRTC)
-- **Home Assistant Integration**: Can be controlled via Home Assistant automations
+- ✅ **WebRTC Signaling** - WebSocket-based signaling compatible with Android
+- ✅ **Full WebRTC Peer Connection** - DTLS-SRTP encryption, ICE candidate handling
+- ✅ **Audio I/O** - I2S audio with ES8311 DAC and ES7210 ADC support
+- ✅ **Home Assistant Entities** - Switches, sensors, and text sensors
+- ✅ **Auto-Connect** - Automatic call establishment
+- ✅ **Auto-Accept** - Automatic incoming call acceptance
+- ✅ **Call Management** - Start, end, accept, and mute controls
 
-## Hardware Requirements
+## Quick Start
 
-- ESP32 development board
-- I2S microphone (e.g., INMP441)
-- I2S amplifier/speaker (e.g., MAX98357A)
-
-### Pin Configuration
-
-Default pin configuration (modify in `intercom_component.cpp` if needed):
-
-**Microphone (INMP441):**
-- BCLK: GPIO 32
-- WS: GPIO 25
-- DATA: GPIO 33
-
-**Speaker (MAX98357A):**
-- BCLK: GPIO 26
-- LRCLK: GPIO 25
-- DIN: GPIO 22
-
-## Installation
-
-### Option 1: ESPHome Add-on (Home Assistant)
-
-1. Install ESPHome add-on in Home Assistant
-2. Copy `intercom.yaml` to your ESPHome configuration directory
-3. Copy `intercom_component.h` and `intercom_component.cpp` to a custom components directory
-4. Create `secrets.yaml` with your WiFi credentials:
-
-```yaml
-wifi_ssid: "YOUR_WIFI_SSID"
-wifi_password: "YOUR_WIFI_PASSWORD"
-api_encryption_key: "YOUR_API_KEY"
-ota_password: "YOUR_OTA_PASSWORD"
-```
-
-5. Compile and upload to your ESP32 device
-
-### Option 2: Standalone ESPHome
-
-1. Install ESPHome:
+1. **Install ESPHome Component:**
    ```bash
-   pip install esphome
+   cp -r esphome/components/intercom ~/.esphome/components/
    ```
 
-2. Create `secrets.yaml` with your credentials
-
-3. Compile and upload:
+2. **Add ESP WebRTC Solution:**
    ```bash
-   esphome compile intercom.yaml
-   esphome upload intercom.yaml
+   cd ~/.esphome/components/intercom
+   git submodule add https://github.com/espressif/esp-webrtc-solution.git esp-webrtc-solution
+   cd esp-webrtc-solution && git submodule update --init --recursive
    ```
 
-## Configuration
+3. **Use Configuration:**
+   - Copy `esphome/intercom_waveshare.yaml` to your ESPHome directory
+   - Update WiFi credentials in `secrets.yaml`
+   - Compile and upload
 
-### Basic Configuration
+4. **Configure in Home Assistant:**
+   - Set target device ID in `input_text.intercom_target_device_id`
+   - Use `switch.start_intercom_call` to initiate calls
+   - Monitor status via sensors
 
-Edit `intercom.yaml` to configure:
+## Documentation
 
-- **WiFi**: Set SSID and password in `secrets.yaml`
-- **Signaling Server**: Default is `ha.shafferco.com:1880/endpoint/webrtc`
-- **Audio Port**: Default UDP port is 5004
+- **[ESPHome Quick Start](README_ESPHOME.md)** - Quick setup and installation
+- **[WebRTC Integration Guide](WEBRTC_INTEGRATION.md)** - ESP WebRTC Solution setup
+- **[Calling Guide](CALLING_GUIDE.md)** - How to make and receive calls
+- **[ESPHome Integration](ESPHOME_INTEGRATION.md)** - Detailed integration guide
+- **[Waveshare Hardware](WAVESHARE_HARDWARE.md)** - Waveshare ESP32-P4-86 configuration
+- **[General Hardware](docs/HARDWARE.md)** - General hardware setup guide
 
-### Custom Component
+## Hardware Support
 
-The custom component (`intercom_component.h`/`intercom_component.cpp`) provides:
+### Waveshare ESP32-P4-86 Panel
 
-- WebSocket signaling client
-- I2S audio handling
-- RTP/UDP audio streaming
-- Call state management
+- **Microcontroller**: ESP32-P4
+- **Audio DAC**: ES8311 (I2C 0x18)
+- **Audio ADC**: ES7210 (I2C 0x40)
+- **I2S**: Shared bus for microphone and speaker
+- **Sample Rates**: 16kHz (mic), 48kHz (speaker)
 
-## Usage
+See [WAVESHARE_HARDWARE.md](WAVESHARE_HARDWARE.md) for pin configurations and setup.
 
-### Home Assistant Integration
-
-Once installed, the intercom device will appear in Home Assistant with:
-
-- **Switches**: Start Call, End Call, Accept Call
-- **Sensors**: WiFi Signal, Uptime
-- **Text Sensors**: IP Address, SSID, MAC Address
-
-### Making Calls
-
-1. **Via Home Assistant**:
-   - Use the "Start Call" switch
-   - Specify target device ID in automation
-
-2. **Via API**:
-   ```yaml
-   service: esphome.intercom_start_call
-   data:
-     target_device_id: "station-12345678"
-   ```
-
-### Receiving Calls
-
-The device automatically:
-- Connects to signaling server on startup
-- Joins room with its client ID (format: `esphome-XXXXXXXX`)
-- Accepts incoming calls automatically
-
-## Integration with Android
-
-### Current Status
-
-- ✅ Same signaling protocol
-- ✅ Same message format
-- ⚠️ Different audio protocol (RTP vs WebRTC)
-
-### For Full Interoperability
-
-See `INTEGRATION.md` in the parent directory for options to enable Android ↔ ESPHome calls.
-
-## Troubleshooting
-
-### Device Not Connecting
-
-1. **Check WiFi**: Verify credentials in `secrets.yaml`
-2. **Check Signaling Server**: Verify server is accessible
-3. **Check Logs**: Enable debug logging in ESPHome
-
-### No Audio
-
-1. **Check I2S Connections**: Verify pin connections
-2. **Check Audio Port**: Verify UDP port 5004 is open
-3. **Check Buffer Sizes**: May need to adjust for your hardware
-
-### WebSocket Disconnects
-
-1. **Network Stability**: Check WiFi signal strength
-2. **Server Availability**: Verify signaling server is running
-3. **Reconnect Settings**: Adjust reconnect timeout if needed
-
-## Development
-
-### Custom Component Structure
+## Project Structure
 
 ```
-esphome-intercom/
-├── intercom.yaml              # Main ESPHome configuration
-├── intercom_component.h       # Component header
-├── intercom_component.cpp     # Component implementation
-└── README.md                  # This file
+esp32-intercom/
+├── esphome/
+│   ├── components/intercom/      # ESPHome custom component
+│   └── intercom_waveshare.yaml   # Complete configuration
+├── main/                          # ESP-IDF version (alternative)
+├── docs/                          # Additional documentation
+└── README.md                      # This file
 ```
 
-### Adding Features
+## Requirements
 
-To extend functionality:
+- **ESPHome** with ESP-IDF framework (v5.4.2+)
+- **ESP WebRTC Solution** (as submodule)
+- **ESP32-P4** or compatible ESP32 variant
+- **Home Assistant** (optional, for automation)
 
-1. **Add Methods**: Add to `intercom_component.h` and implement in `.cpp`
-2. **Expose to ESPHome**: Add sensors/switches in `intercom.yaml`
-3. **Home Assistant**: Use ESPHome API to control from HA
+## Android Compatibility
 
-## Limitations
+✅ **Fully Compatible** - Uses standard WebRTC with:
+- DTLS-SRTP encryption
+- ICE candidate processing
+- Proper SDP generation
+- Standard WebRTC media streaming
 
-1. **Audio Protocol**: Uses RTP instead of WebRTC (simpler but requires Android modification)
-2. **No Encryption**: Audio is unencrypted (works on local network)
-3. **No Echo Cancellation**: Basic audio only
-4. **Limited Codecs**: PCM only (no Opus, etc.)
-
-## Future Enhancements
-
-- [ ] Full WebRTC support (if lightweight library available)
-- [ ] Audio codec support (Opus)
-- [ ] Echo cancellation
-- [ ] DTLS-SRTP encryption
-- [ ] Call quality metrics
-- [ ] Multi-room support
-
-## References
-
-- [ESPHome Documentation](https://esphome.io/)
-- [ESPHome Custom Components](https://esphome.io/components/custom.html)
-- [ESP32 I2S Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/i2s.html)
-- [WebRTC Signaling Protocol](../README.md)
+Works with unmodified Android WebRTC applications.
 
 ## License
 
-Same as main project.
-
+See LICENSE file.

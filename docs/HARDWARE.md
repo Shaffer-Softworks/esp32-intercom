@@ -1,6 +1,6 @@
-# Hardware Setup Guide
+# General Hardware Setup Guide
 
-This guide explains how to connect the required hardware components for the ESP32 Intercom.
+General hardware setup for ESP32 intercom devices. For Waveshare ESP32-P4-86 specific configuration, see [WAVESHARE_HARDWARE.md](../WAVESHARE_HARDWARE.md).
 
 ## Required Components
 

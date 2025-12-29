@@ -3,6 +3,11 @@
 #include "esphome/core/application.h"
 #include "esphome/components/wifi/wifi_component.h"
 
+#ifdef USE_ESP_IDF
+#include "esp_peer.h"
+#include "esp_webrtc.h"
+#endif
+
 namespace esphome {
 namespace intercom {
 
@@ -42,11 +47,12 @@ void IntercomComponent::loop() {
   web_socket_.loop();
 #endif
   
-  // Handle switch actions
-  if (start_call_switch_ && start_call_switch_->state) {
-    // Start call action would be triggered via automation
-    // This is a placeholder - actual call target should come from automation
-    ESP_LOGD(TAG, "Start call switch activated");
+  // Handle switch actions - these are typically handled via automations with target device
+  // But we can also handle them here if needed
+  if (start_call_switch_ && start_call_switch_->state && !target_device_id_.empty() && !in_call_ && !waiting_for_ready_) {
+    // If target device is already set, start the call
+    std::string target = target_device_id_;
+    start_call(target);
   }
   
   if (end_call_switch_ && end_call_switch_->state && in_call_) {
@@ -149,8 +155,17 @@ void IntercomComponent::websocket_event_handler(void *arg, esp_event_base_t even
       ESP_LOGI(TAG, "WebSocket Connected");
       instance->connected_ = true;
       instance->generate_session_id_();
+      
+      // Join own room for always-on mode (can receive calls)
       instance->room_id_ = instance->client_id_;
       instance->send_join_message_();
+      
+      // If we were waiting to call someone, retry now
+      if (!instance->target_device_id_.empty() && !instance->in_call_) {
+        std::string target = instance->target_device_id_;
+        instance->target_device_id_ = ""; // Reset before calling
+        instance->start_call(target);
+      }
       break;
 
     case WEBSOCKET_EVENT_DISCONNECTED:
@@ -300,6 +315,37 @@ void IntercomComponent::send_offer_message_(const std::string &sdp) {
 #endif
 }
 
+void IntercomComponent::send_offer_for_call_() {
+#ifdef USE_ESP_IDF
+  // Use ESP WebRTC to create proper offer
+  if (webrtc_peer_ == nullptr) {
+    if (init_webrtc_peer(true) == ESP_OK) {
+      create_offer();
+    } else {
+      ESP_LOGE(TAG, "Failed to initialize WebRTC peer for offer");
+    }
+  } else {
+    create_offer();
+  }
+#else
+  // Fallback to simplified SDP (won't work with Android)
+  std::string local_ip = wifi::global_wifi_component->wifi_sta_ip().str();
+  
+  char sdp[512];
+  snprintf(sdp, sizeof(sdp), 
+           "v=0\r\n"
+           "o=- %lu 2 IN IP4 %s\r\n"
+           "s=Intercom Call\r\n"
+           "t=0 0\r\n"
+           "m=audio 5004 RTP/AVP 0\r\n"
+           "c=IN IP4 %s\r\n",
+           millis(), local_ip.c_str(), local_ip.c_str());
+  
+  send_offer_message_(sdp);
+  ESP_LOGI(TAG, "Sent simplified offer to %s (not WebRTC compatible)", target_device_id_.c_str());
+#endif
+}
+
 void IntercomComponent::send_answer_message_(const std::string &sdp) {
 #ifdef USE_ESP_IDF
   cJSON *json = cJSON_CreateObject();
@@ -400,26 +446,66 @@ void IntercomComponent::handle_signaling_message_(const std::string &message) {
   } else if (msg_type == "offer") {
     cJSON *sdp = cJSON_GetObjectItem(json, "sdp");
     if (sdp && cJSON_IsString(sdp)) {
-      ESP_LOGI(TAG, "Received offer - accepting call");
-      accept_call();
+      std::string sdp_str = cJSON_GetStringValue(sdp);
+      ESP_LOGI(TAG, "Received offer - %s", auto_accept_ ? "auto-accepting call" : "call incoming");
+      
+      // Extract sender info if available
+      cJSON *sender_client_id = cJSON_GetObjectItem(json, "clientId");
+      if (sender_client_id && cJSON_IsString(sender_client_id)) {
+        target_device_id_ = cJSON_GetStringValue(sender_client_id);
+        ESP_LOGI(TAG, "Incoming call from: %s", target_device_id_.c_str());
+      }
+      
+      if (auto_accept_) {
+#ifdef USE_ESP_IDF
+        // Initialize WebRTC peer as answerer
+        if (init_webrtc_peer(false) == ESP_OK) {
+          // Set remote description (offer), which will trigger answer creation
+          set_remote_description(sdp_str, true);
+        } else {
+          ESP_LOGE(TAG, "Failed to initialize WebRTC peer for incoming call");
+        }
+#else
+        accept_call();
+#endif
+      } else {
+        ESP_LOGI(TAG, "Call waiting - manual acceptance required");
+      }
     }
     
   } else if (msg_type == "answer") {
     cJSON *sdp = cJSON_GetObjectItem(json, "sdp");
     if (sdp && cJSON_IsString(sdp)) {
-      ESP_LOGI(TAG, "Received answer - call established");
+      std::string sdp_str = cJSON_GetStringValue(sdp);
+      ESP_LOGI(TAG, "Received answer - setting remote description");
+      
+#ifdef USE_ESP_IDF
+      // Set remote description (answer)
+      set_remote_description(sdp_str, false);
+#else
+      // Simplified: mark as in call
       in_call_ = true;
       update_call_state_();
+#endif
     }
     
   } else if (msg_type == "candidate") {
     cJSON *candidate = cJSON_GetObjectItem(json, "candidate");
     if (candidate && cJSON_IsString(candidate)) {
-      ESP_LOGD(TAG, "Received ICE candidate: %s", cJSON_GetStringValue(candidate));
+      std::string candidate_str = cJSON_GetStringValue(candidate);
+      ESP_LOGD(TAG, "Received ICE candidate: %s", candidate_str.c_str());
+      
+#ifdef USE_ESP_IDF
+      // Add ICE candidate to WebRTC peer
+      add_ice_candidate(candidate_str);
+#endif
     }
     
   } else if (msg_type == "leave") {
     ESP_LOGI(TAG, "Remote left - ending call");
+#ifdef USE_ESP_IDF
+    deinit_webrtc_peer();
+#endif
     end_call();
     
   } else if (msg_type == "error") {
@@ -451,10 +537,29 @@ void IntercomComponent::handle_signaling_message_(const std::string &message) {
     ESP_LOGI(TAG, "Room is ready");
     ready_ = true;
     
+    // If we're waiting to start a call and room is ready, send offer
+    if (waiting_for_ready_ && auto_connect_ && !target_device_id_.empty()) {
+      waiting_for_ready_ = false;
+      ESP_LOGI(TAG, "Room ready, sending offer to %s", target_device_id_.c_str());
+      send_offer_for_call_();
+    }
+    
   } else if (type == "offer") {
     std::string sdp = doc["sdp"] | "";
-    ESP_LOGI(TAG, "Received offer - accepting call");
-    accept_call();
+    ESP_LOGI(TAG, "Received offer - %s", auto_accept_ ? "auto-accepting call" : "call incoming");
+    
+    // Extract sender info if available
+    std::string sender_client_id = doc["clientId"] | "";
+    if (!sender_client_id.empty()) {
+      target_device_id_ = sender_client_id;
+      ESP_LOGI(TAG, "Incoming call from: %s", target_device_id_.c_str());
+    }
+    
+    if (auto_accept_) {
+      accept_call();
+    } else {
+      ESP_LOGI(TAG, "Call waiting - manual acceptance required");
+    }
     
   } else if (type == "answer") {
     std::string sdp = doc["sdp"] | "";
@@ -479,38 +584,77 @@ void IntercomComponent::handle_signaling_message_(const std::string &message) {
 
 void IntercomComponent::start_call(const std::string &target_device_id) {
   if (in_call_) {
-    ESP_LOGW(TAG, "Already in a call");
+    ESP_LOGW(TAG, "Already in a call, ending current call first");
+    end_call();
+    // Wait a bit before starting new call
+    this->set_timeout(500, [this, target_device_id]() {
+      this->start_call(target_device_id);
+    });
     return;
   }
   
   if (!connected_) {
-    ESP_LOGW(TAG, "Not connected to signaling server");
+    ESP_LOGW(TAG, "Not connected to signaling server, will retry when connected");
+    target_device_id_ = target_device_id;
+    // Will retry when connected
+    return;
+  }
+  
+  if (target_device_id.empty()) {
+    ESP_LOGE(TAG, "Target device ID cannot be empty");
     return;
   }
   
   target_device_id_ = target_device_id;
   room_id_ = target_device_id;
   generate_session_id_();
+  waiting_for_ready_ = true;
   
   send_join_message_();
-  ESP_LOGI(TAG, "Initiating call to %s", target_device_id.c_str());
+  ESP_LOGI(TAG, "Initiating call to %s (waiting for room ready)", target_device_id.c_str());
 }
 
 void IntercomComponent::end_call() {
-  if (!in_call_) {
+  if (!in_call_ && !waiting_for_ready_) {
     return;
   }
   
   send_leave_message_();
+  
+#ifdef USE_ESP_IDF
+  deinit_webrtc_peer();
+#endif
+  
   in_call_ = false;
+  waiting_for_ready_ = false;
+  
+  // Reset room to own client ID for always-on mode
+  room_id_ = client_id_;
+  if (connected_) {
+    generate_session_id_();
+    send_join_message_();
+  }
+  
   target_device_id_ = "";
   
   update_call_state_();
-  ESP_LOGI(TAG, "Call ended");
+  ESP_LOGI(TAG, "Call ended, returned to standby mode");
 }
 
 void IntercomComponent::accept_call() {
-  // Send answer (simplified - in real implementation, generate proper SDP)
+#ifdef USE_ESP_IDF
+  // If we received an offer, answer should already be created in set_remote_description
+  // But if called manually, create peer as answerer
+  if (webrtc_peer_ == nullptr) {
+    if (init_webrtc_peer(false) == ESP_OK) {
+      // Answer will be created when remote description is set
+      ESP_LOGI(TAG, "WebRTC peer initialized as answerer");
+    } else {
+      ESP_LOGE(TAG, "Failed to initialize WebRTC peer for answer");
+    }
+  }
+#else
+  // Fallback to simplified SDP (won't work with Android)
   std::string local_ip = wifi::global_wifi_component->wifi_sta_ip().str();
   
   char sdp[256];
@@ -521,7 +665,8 @@ void IntercomComponent::accept_call() {
   in_call_ = true;
   
   update_call_state_();
-  ESP_LOGI(TAG, "Call accepted");
+  ESP_LOGI(TAG, "Call accepted (simplified, not WebRTC compatible)");
+#endif
 }
 
 void IntercomComponent::toggle_mute() {
@@ -563,6 +708,15 @@ void IntercomComponent::update_status_text_() {
     call_status_text_sensor_->publish_state(status);
   }
   
+  // Update target device text sensor
+  if (target_device_text_sensor_) {
+    if (!target_device_id_.empty()) {
+      target_device_text_sensor_->publish_state(target_device_id_);
+    } else {
+      target_device_text_sensor_->publish_state("None");
+    }
+  }
+  
   // Update switch states
   if (start_call_switch_) {
     // Start call switch is momentary, always off
@@ -573,7 +727,7 @@ void IntercomComponent::update_status_text_() {
   
   if (end_call_switch_) {
     // End call switch shows call state
-    end_call_switch_->publish_state(in_call_);
+    end_call_switch_->publish_state(in_call_ || waiting_for_ready_);
   }
   
   if (accept_call_switch_) {
@@ -587,6 +741,212 @@ void IntercomComponent::update_status_text_() {
     mute_switch_->publish_state(muted_);
   }
 }
+
+#ifdef USE_ESP_IDF
+// WebRTC Implementation
+
+esp_err_t IntercomComponent::init_webrtc_peer(bool is_offerer) {
+  if (webrtc_peer_ != nullptr) {
+    ESP_LOGW(TAG, "WebRTC peer already initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  is_offerer_ = is_offerer;
+  
+  esp_peer_config_t peer_config = {
+    .is_offerer = is_offerer,
+    .ice_servers = NULL,  // No STUN/TURN for now, can add later
+    .ice_server_count = 0,
+  };
+  
+  // Set callbacks
+  esp_peer_event_cb_t event_cb = {
+    .on_ice_candidate = ice_candidate_cb,
+    .on_connection_state_change = peer_connection_state_cb,
+    .ctx = this,
+  };
+  
+  esp_err_t ret = esp_peer_create(&peer_config, &event_cb, &webrtc_peer_);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create WebRTC peer: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  
+  ESP_LOGI(TAG, "WebRTC peer initialized (is_offerer=%d)", is_offerer);
+  return ESP_OK;
+}
+
+void IntercomComponent::deinit_webrtc_peer() {
+  if (webrtc_peer_ != nullptr) {
+    esp_peer_destroy(webrtc_peer_);
+    webrtc_peer_ = nullptr;
+    ESP_LOGI(TAG, "WebRTC peer destroyed");
+  }
+}
+
+esp_err_t IntercomComponent::create_offer() {
+  if (webrtc_peer_ == nullptr) {
+    ESP_LOGE(TAG, "WebRTC peer not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  char *offer_sdp = nullptr;
+  esp_err_t ret = esp_peer_create_offer(webrtc_peer_, &offer_sdp);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create offer: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  
+  if (offer_sdp) {
+    send_offer_message_(offer_sdp);
+    free(offer_sdp);
+    ESP_LOGI(TAG, "Created and sent WebRTC offer");
+  }
+  
+  return ESP_OK;
+}
+
+esp_err_t IntercomComponent::create_answer() {
+  if (webrtc_peer_ == nullptr) {
+    ESP_LOGE(TAG, "WebRTC peer not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  char *answer_sdp = nullptr;
+  esp_err_t ret = esp_peer_create_answer(webrtc_peer_, &answer_sdp);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to create answer: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  
+  if (answer_sdp) {
+    send_answer_message_(answer_sdp);
+    free(answer_sdp);
+    ESP_LOGI(TAG, "Created and sent WebRTC answer");
+  }
+  
+  return ESP_OK;
+}
+
+esp_err_t IntercomComponent::set_remote_description(const std::string &sdp, bool is_offer) {
+  if (webrtc_peer_ == nullptr) {
+    ESP_LOGE(TAG, "WebRTC peer not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  esp_err_t ret = esp_peer_set_remote_description(webrtc_peer_, sdp.c_str(), is_offer);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set remote description: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  
+  ESP_LOGI(TAG, "Set remote description (is_offer=%d)", is_offer);
+  
+  // If we received an offer, create answer
+  if (is_offer && is_offerer_ == false) {
+    this->set_timeout(100, [this]() {
+      this->create_answer();
+    });
+  }
+  
+  return ESP_OK;
+}
+
+esp_err_t IntercomComponent::add_ice_candidate(const std::string &candidate) {
+  if (webrtc_peer_ == nullptr) {
+    ESP_LOGE(TAG, "WebRTC peer not initialized");
+    return ESP_ERR_INVALID_STATE;
+  }
+  
+  esp_err_t ret = esp_peer_add_ice_candidate(webrtc_peer_, candidate.c_str());
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to add ICE candidate: %s", esp_err_to_name(ret));
+    return ret;
+  }
+  
+  ESP_LOGD(TAG, "Added ICE candidate");
+  return ESP_OK;
+}
+
+void IntercomComponent::on_ice_candidate(const char *candidate) {
+  if (candidate) {
+    ESP_LOGD(TAG, "Generated ICE candidate: %s", candidate);
+    send_candidate_message_(candidate);
+  }
+}
+
+void IntercomComponent::on_peer_connection_state(esp_peer_connection_state_t state) {
+  switch (state) {
+    case ESP_PEER_CONNECTION_STATE_NEW:
+      ESP_LOGI(TAG, "WebRTC: Connection state: NEW");
+      break;
+    case ESP_PEER_CONNECTION_STATE_CONNECTING:
+      ESP_LOGI(TAG, "WebRTC: Connection state: CONNECTING");
+      break;
+    case ESP_PEER_CONNECTION_STATE_CONNECTED:
+      ESP_LOGI(TAG, "WebRTC: Connection state: CONNECTED");
+      in_call_ = true;
+      update_call_state_();
+      break;
+    case ESP_PEER_CONNECTION_STATE_DISCONNECTED:
+      ESP_LOGI(TAG, "WebRTC: Connection state: DISCONNECTED");
+      in_call_ = false;
+      update_call_state_();
+      break;
+    case ESP_PEER_CONNECTION_STATE_FAILED:
+      ESP_LOGE(TAG, "WebRTC: Connection state: FAILED");
+      in_call_ = false;
+      update_call_state_();
+      break;
+    case ESP_PEER_CONNECTION_STATE_CLOSED:
+      ESP_LOGI(TAG, "WebRTC: Connection state: CLOSED");
+      in_call_ = false;
+      update_call_state_();
+      break;
+    default:
+      break;
+  }
+}
+
+// Static callbacks
+void IntercomComponent::ice_candidate_cb(void *ctx, const char *candidate) {
+  IntercomComponent *instance = static_cast<IntercomComponent *>(ctx);
+  if (instance) {
+    instance->on_ice_candidate(candidate);
+  }
+}
+
+void IntercomComponent::peer_connection_state_cb(void *ctx, esp_peer_connection_state_t state) {
+  IntercomComponent *instance = static_cast<IntercomComponent *>(ctx);
+  if (instance) {
+    instance->on_peer_connection_state(state);
+  }
+}
+
+int IntercomComponent::audio_capture_cb(void *ctx, void *buffer, int len) {
+  // TODO: Capture audio from I2S and fill buffer
+  // This should be connected to ESPHome's audio pipeline
+  IntercomComponent *instance = static_cast<IntercomComponent *>(ctx);
+  if (instance && !instance->muted_) {
+    // Capture audio and copy to buffer
+    // For now, return 0 (no audio)
+  }
+  return 0;
+}
+
+int IntercomComponent::audio_render_cb(void *ctx, void *buffer, int len) {
+  // TODO: Render audio from buffer to I2S/speaker
+  // This should be connected to ESPHome's audio pipeline
+  IntercomComponent *instance = static_cast<IntercomComponent *>(ctx);
+  if (instance) {
+    // Render audio from buffer
+    // For now, just zero the buffer
+    memset(buffer, 0, len);
+  }
+  return len;
+}
+
+#endif  // USE_ESP_IDF
 
 }  // namespace intercom
 }  // namespace esphome

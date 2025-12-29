@@ -147,12 +147,17 @@ intercom:
   signaling_port: 1880
   signaling_path: "/endpoint/webrtc"
   client_id_prefix: "waveshare-"
+  auto_accept: true    # Automatically accept incoming calls
+  auto_connect: true   # Automatically connect when calling
   call_state:
     name: "Intercom Call State"
     id: intercom_call_state
   call_status:
     name: "Intercom Status"
     id: intercom_call_status
+  target_device:
+    name: "Intercom Target Device"
+    id: intercom_target_device
   start_call:
     name: "Start Intercom Call"
     id: start_intercom_call
@@ -170,13 +175,27 @@ intercom:
     id: intercom_mute
     internal: false
 
+# Input text for target device ID
+input_text:
+  - id: intercom_target_device_input
+    name: "Intercom Target Device ID"
+    initial_value: ""
+    min_length: 1
+    max_length: 50
+
 # Scripts for call management
 script:
   - id: start_intercom_call_script
     then:
       - lambda: |-
-          id(intercom_device).start_call("target-device-id");
-          ESP_LOGD("intercom", "Starting call");
+          // Get target device from input_text
+          std::string target = id(intercom_target_device_input).state;
+          if (target.empty()) {
+            ESP_LOGE("intercom", "Target device ID is empty!");
+            return;
+          }
+          id(intercom_device).start_call(target);
+          ESP_LOGI("intercom", "Starting call to %s", target.c_str());
   
   - id: end_intercom_call_script
     then:
@@ -206,6 +225,15 @@ automation:
     action:
       - script.execute: start_intercom_call_script
       - switch.turn_off: start_intercom_call
+      
+  - alias: "Update Target Device Display"
+    trigger:
+      - platform: state
+        entity_id: input_text.intercom_target_device_id
+    action:
+      - lambda: |-
+          // Update the display text sensor (read-only)
+          // The actual target is stored and used when starting a call
   
   - alias: "End Intercom Call"
     trigger:
