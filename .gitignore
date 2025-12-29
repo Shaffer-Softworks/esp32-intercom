@@ -6,6 +6,13 @@ build/
 .vscode/
 .idea/
 
+# ESP-IDF
+sdkconfig
+sdkconfig.old
+dependencies.lock
+*.pyc
+__pycache__/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -21,4 +28,7 @@ Thumbs.db
 # User-specific configuration
 secrets.h
 config.h
+
+# Components (if using submodules, track the directory but ignore contents)
+# components/esp-webrtc-solution/*
 

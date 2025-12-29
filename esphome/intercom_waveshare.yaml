@@ -1,0 +1,243 @@
+# ESPHome Configuration for Waveshare ESP32-P4-86 with WebRTC Intercom
+# Based on: https://github.com/alaltitov/Waveshare-ESP32-P4-86-Panel-ETH-2RO
+
+esphome:
+  name: waveshare-p4-box
+  friendly_name: WaveShare P4 Box
+  name_add_mac_suffix: false
+  platformio_options:
+    platform_packages:
+      - platformio/toolchain-riscv32-esp@14.2.0+20241119
+
+esp32:
+  variant: esp32p4
+  board: esp32-p4-evboard
+  flash_size: 32MB
+  cpu_frequency: 400MHz
+  framework:
+    type: esp-idf
+    version: 5.4.2
+    advanced:
+      enable_idf_experimental_features: true
+
+logger:
+  level: debug
+  logs:
+    lvgl: info
+    intercom: debug
+  hardware_uart: UART0
+
+psram:
+  speed: 200MHz
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret waveshare_api
+
+ota:
+  - platform: esphome
+
+# I2C for ES8311 DAC and ES7210 ADC
+i2c:
+  sda: GPIO7
+  scl: GPIO8
+  scan: true
+  frequency: 400kHz
+  id: i2c_bus
+
+# I2S Audio Configuration for Waveshare ESP32-P4-86
+i2s_audio:
+  - id: audio_bus
+    i2s_mclk_pin: GPIO13
+    i2s_lrclk_pin: GPIO10
+    i2s_bclk_pin: GPIO12
+
+# ES8311 Audio DAC
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: i2c_bus
+    address: 0x18
+
+# ES7210 Audio ADC
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    i2c_id: i2c_bus
+    address: 0x40
+
+# Microphone
+microphone:
+  - platform: i2s_audio
+    id: esp32_microphone
+    i2s_audio_id: audio_bus
+    i2s_din_pin: GPIO11
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    adc_type: external
+
+# Speaker
+speaker:
+  - platform: i2s_audio
+    id: esp32_speaker
+    i2s_audio_id: audio_bus
+    i2s_dout_pin: GPIO9
+    audio_dac: es8311_dac
+    dac_type: external
+    channel: mono
+    buffer_duration: 100ms
+    bits_per_sample: 16bit
+    sample_rate: 48000
+
+  - platform: mixer
+    id: mixing_speaker
+    output_speaker: esp32_speaker
+    source_speakers:
+      - id: announcement_mixing_input
+        timeout: never
+      - id: media_mixing_input
+        timeout: never
+      - id: intercom_mixing_input
+        timeout: never
+
+  - platform: resampler
+    id: announcement_resampling_speaker
+    output_speaker: announcement_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+  - platform: resampler
+    id: media_resampling_speaker
+    output_speaker: media_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+  - platform: resampler
+    id: intercom_resampling_speaker
+    output_speaker: intercom_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+# Audio Amplifier Control
+switch:
+  - platform: gpio
+    pin: GPIO53
+    name: "Audio Amplifier"
+    id: audio_amplifier
+    restore_mode: ALWAYS_OFF
+    internal: true
+
+# Custom Intercom Component
+external_components:
+  - source:
+      type: local
+      path: esphome/components/intercom
+
+intercom:
+  id: intercom_device
+  signaling_server: "ha.shafferco.com"
+  signaling_port: 1880
+  signaling_path: "/endpoint/webrtc"
+  client_id_prefix: "waveshare-"
+  call_state:
+    name: "Intercom Call State"
+    id: intercom_call_state
+  call_status:
+    name: "Intercom Status"
+    id: intercom_call_status
+  start_call:
+    name: "Start Intercom Call"
+    id: start_intercom_call
+    internal: false
+  end_call:
+    name: "End Intercom Call"
+    id: end_intercom_call
+    internal: false
+  accept_call:
+    name: "Accept Intercom Call"
+    id: accept_intercom_call
+    internal: false
+  mute:
+    name: "Intercom Mute"
+    id: intercom_mute
+    internal: false
+
+# Scripts for call management
+script:
+  - id: start_intercom_call_script
+    then:
+      - lambda: |-
+          id(intercom_device).start_call("target-device-id");
+          ESP_LOGD("intercom", "Starting call");
+  
+  - id: end_intercom_call_script
+    then:
+      - lambda: |-
+          id(intercom_device).end_call();
+          ESP_LOGD("intercom", "Ending call");
+  
+  - id: accept_intercom_call_script
+    then:
+      - lambda: |-
+          id(intercom_device).accept_call();
+          ESP_LOGD("intercom", "Accepting call");
+  
+  - id: toggle_intercom_mute_script
+    then:
+      - lambda: |-
+          id(intercom_device).toggle_mute();
+          ESP_LOGD("intercom", "Toggling mute");
+
+# Automation to handle switch actions
+automation:
+  - alias: "Start Intercom Call"
+    trigger:
+      - platform: state
+        entity_id: switch.start_intercom_call
+        to: 'on'
+    action:
+      - script.execute: start_intercom_call_script
+      - switch.turn_off: start_intercom_call
+  
+  - alias: "End Intercom Call"
+    trigger:
+      - platform: state
+        entity_id: switch.end_intercom_call
+        to: 'on'
+    action:
+      - script.execute: end_intercom_call_script
+      - switch.turn_off: end_intercom_call
+  
+  - alias: "Accept Intercom Call"
+    trigger:
+      - platform: state
+        entity_id: switch.accept_intercom_call
+        to: 'on'
+    action:
+      - script.execute: accept_intercom_call_script
+      - switch.turn_off: accept_intercom_call
+  
+  - alias: "Toggle Intercom Mute"
+    trigger:
+      - platform: state
+        entity_id: switch.intercom_mute
+    action:
+      - script.execute: toggle_intercom_mute_script
+
+# Additional sensors
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+  
+  - platform: uptime
+    name: "Uptime"
+

@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS 
+        "main.c"
+        "intercom_app.c"
+        "signaling_client.c"
+        "audio_handler.c"
+        "audio_codec.c"
+    INCLUDE_DIRS 
+        "."
+        "include"
+    REQUIRES 
+        nvs_flash
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_client
+        esp_websocket_client
+        mbedtls
+        json
+        driver
+        i2c_master
+)
+
